@@ -1,0 +1,20 @@
+# Local development requirements (Windows, SQLite, no Docker)
+# PDF export (WeasyPrint) and PostgreSQL driver are excluded for quick local setup.
+
+Django==5.1.4
+djangorestframework==3.15.2
+djangorestframework-simplejwt==5.3.1
+django-cors-headers==4.6.0
+django-filter==24.3
+django-celery-beat==2.7.0
+django-celery-results==2.5.1
+celery==5.4.0
+redis==5.2.0
+imapclient==3.0.0
+python-dotenv==1.0.1
+drf-spectacular==0.27.2
+Pillow==11.1.0
+qrcode[pil]==7.4.2
+python-barcode==0.15.1
+# botbuilder packages require C++ Build Tools on Windows — omit for local dev
+# Teams bot endpoint still exists but will return 500 if called without the bot library

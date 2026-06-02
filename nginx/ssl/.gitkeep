@@ -1,0 +1,8 @@
+# Place server.crt and server.key here.
+# Generate a self-signed cert for the local VM:
+#
+#   openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+#     -keyout server.key -out server.crt \
+#     -subj "/CN=helpdesk.yourdomain.local"
+#
+# These files are .gitignored — never commit private keys.

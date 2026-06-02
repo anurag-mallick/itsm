@@ -571,6 +571,3 @@ For issues with this application, create a ticket via the helpdesk portal or con
 
 For development questions, refer to the API documentation at `https://<your-server>/api/docs/`.
 
----
-
-*Built for Bluspring Enterprises — India's leading tech-enabled integrated infrastructure services enterprise.*

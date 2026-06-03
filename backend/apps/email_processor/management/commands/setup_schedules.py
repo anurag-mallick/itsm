@@ -12,12 +12,12 @@ class Command(BaseCommand):
         # (task_name, task_path, every, period, queue)
         schedules = [
             {
-                'name': 'poll_imap_mailbox',
-                'task': 'email_processor.poll_imap',
+                'name': 'Poll all inbound email mailboxes',
+                'task': 'email_processor.poll_all_mailboxes',
                 'every': 60,
                 'period': IntervalSchedule.SECONDS,
                 'queue': 'default',
-                'description': 'Poll IMAP mailbox for new inbound support emails',
+                'description': 'Poll all configured inbound mailboxes every 60 seconds',
             },
             {
                 'name': 'check_sla_breaches',

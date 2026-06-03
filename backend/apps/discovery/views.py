@@ -108,3 +108,39 @@ class DeviceIgnoreView(APIView):
         device.status = DiscoveredDevice.STATUS_IGNORED
         device.save(update_fields=['status'])
         return Response({'detail': 'Device marked as ignored.'})
+
+
+class DeviceRDPFileView(APIView):
+    """GET /api/discovery/devices/{id}/rdp/ — download a .rdp file for Windows Remote Desktop."""
+    permission_classes = [IsITAgent]
+
+    def get(self, request, pk):
+        from django.http import HttpResponse
+        device = get_object_or_404(DiscoveredDevice, pk=pk)
+        if not device.rdp_available:
+            return Response({'detail': 'RDP (port 3389) is not open on this device.'}, status=400)
+
+        name = device.hostname or device.ip_address
+        rdp_content = (
+            f'full address:s:{device.ip_address}\r\n'
+            f'prompt for credentials:i:1\r\n'
+            f'screen mode id:i:2\r\n'
+            f'use multimon:i:0\r\n'
+            f'desktopwidth:i:1920\r\n'
+            f'desktopheight:i:1080\r\n'
+            f'connection type:i:7\r\n'
+            f'authentication level:i:2\r\n'
+            f'username:s:\r\n'
+            f'redirectclipboard:i:1\r\n'
+            f'redirectprinters:i:1\r\n'
+        )
+        response = HttpResponse(rdp_content, content_type='application/x-rdp')
+        response['Content-Disposition'] = f'attachment; filename="{name}.rdp"'
+        return response
+
+
+class DeviceDetailView(generics.RetrieveAPIView):
+    """GET /api/discovery/devices/{id}/ — full device detail including all collected info."""
+    queryset = DiscoveredDevice.objects.select_related('scan', 'matched_asset').all()
+    serializer_class = DiscoveredDeviceSerializer
+    permission_classes = [IsITAgent]

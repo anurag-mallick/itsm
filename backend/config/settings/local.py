@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'apps.catalog',
     'apps.knowledge',
     'apps.problems',
+    'apps.email_config',
 ]
 
 MIDDLEWARE = [
@@ -93,13 +94,23 @@ CACHES = {
 }
 
 # ── Email — print to console ──────────────────────────────────────────────────
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-DEFAULT_FROM_EMAIL = 'helpdesk@localhost'
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+
+# SMTP stub for local dev — override with real values from DB (SystemConfig)
+SMTP_HOST = os.environ.get('SMTP_HOST', '')
+SMTP_PORT = 465  # SSL/TLS
+SMTP_USER = os.environ.get('SMTP_USER', '')
+SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD', '')
+EMAIL_HOST = os.environ.get('SMTP_HOST', '')
+EMAIL_PORT = 465
+EMAIL_USE_SSL = True
+EMAIL_USE_TLS = False
+DEFAULT_FROM_EMAIL = os.environ.get('EMAIL_FROM', os.environ.get('SMTP_USER', 'helpdesk@localhost'))
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
 
 # ── Celery — run tasks synchronously in the same process (no worker needed) ───
 CELERY_TASK_ALWAYS_EAGER = True
-CELERY_TASK_EAGER_PROPAGATES = True
+CELERY_TASK_EAGER_PROPAGATES = False
 CELERY_BROKER_URL = 'memory://'
 CELERY_RESULT_BACKEND = 'cache+memory://'
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'

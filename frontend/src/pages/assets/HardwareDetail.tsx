@@ -463,7 +463,7 @@ export default function HardwareDetail() {
           style={{ marginBottom: 16 }}
           message="Awaiting user acceptance"
           description={
-            asset.assigned_to?.email
+            asset.assigned_to_email
               ? `An acceptance email has been sent to ${asset.assigned_to_email}. Waiting for the user to accept or reject the assignment.`
               : 'An acceptance email has been sent to the assigned user.'
           }

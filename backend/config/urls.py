@@ -23,6 +23,7 @@ urlpatterns = [
         path('', include('apps.catalog.urls')),
         path('', include('apps.knowledge.urls')),
         path('', include('apps.problems.urls')),
+        path('', include('apps.email_config.urls')),
         path('schema/', SpectacularAPIView.as_view(), name='schema'),
         path('docs/', SpectacularSwaggerUIView.as_view(url_name='schema'), name='swagger-ui'),
     ])),

@@ -100,6 +100,8 @@ class TicketListSerializer(serializers.ModelSerializer):
             'assignee_name',
             'sla_due_at',
             'sla_breached',
+            'sla_paused_at',
+            'resolution_notes',
             'is_archived',
             'archived_at',
             'archive_reason',
@@ -117,6 +119,8 @@ class TicketListSerializer(serializers.ModelSerializer):
             'assignee_name',
             'category_name',
             'sla_breached',
+            'sla_paused_at',
+            'resolution_notes',
             'is_archived',
             'archived_at',
             'archive_reason',
@@ -158,8 +162,10 @@ class TicketDetailSerializer(serializers.ModelSerializer):
             'custom_fields',
             'sla_due_at',
             'sla_breached',
+            'sla_paused_at',
             'resolved_at',
             'closed_at',
+            'resolution_notes',
             'email_message_id',
             'teams_conversation_id',
             'is_archived',
@@ -181,8 +187,10 @@ class TicketDetailSerializer(serializers.ModelSerializer):
             'assignee_name',
             'category_name',
             'sla_breached',
+            'sla_paused_at',
             'resolved_at',
             'closed_at',
+            'resolution_notes',
             'is_archived',
             'archived_at',
             'archive_reason',
@@ -217,7 +225,7 @@ class TicketCreateSerializer(serializers.ModelSerializer):
 
         from apps.custom_fields.models import FieldSchema
         from django.db.models import Q
-        
+
         schemas_qs = FieldSchema.objects.filter(
             module=FieldSchema.TICKETS,
             is_active=True
@@ -272,7 +280,16 @@ class TicketCreateSerializer(serializers.ModelSerializer):
 class TicketUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ticket
-        fields = ['subject', 'description', 'priority', 'category', 'assignee', 'status', 'custom_fields']
+        fields = [
+            'subject',
+            'description',
+            'priority',
+            'category',
+            'assignee',
+            'status',
+            'custom_fields',
+            'resolution_notes',
+        ]
         extra_kwargs = {
             'subject': {'required': False},
             'description': {'required': False},
@@ -281,6 +298,7 @@ class TicketUpdateSerializer(serializers.ModelSerializer):
             'assignee': {'required': False},
             'status': {'required': False},
             'custom_fields': {'required': False},
+            'resolution_notes': {'required': False},
         }
 
     def validate(self, attrs):
@@ -293,7 +311,7 @@ class TicketUpdateSerializer(serializers.ModelSerializer):
 
         from apps.custom_fields.models import FieldSchema
         from django.db.models import Q
-        
+
         schemas_qs = FieldSchema.objects.filter(
             module=FieldSchema.TICKETS,
             is_active=True
@@ -321,6 +339,24 @@ class TicketUpdateSerializer(serializers.ModelSerializer):
 
         return attrs
 
+
+class TicketStatusUpdateSerializer(serializers.Serializer):
+    """
+    Validates the body of POST /api/tickets/{id}/status/.
+    Delegates field-requirement checks to the model's TRANSITION_REQUIREMENTS map.
+    """
+    status = serializers.ChoiceField(choices=Ticket.STATUS_CHOICES)
+    resolution_notes = serializers.CharField(required=False, allow_blank=True, default='')
+
+    def validate(self, data):
+        required_fields = Ticket.TRANSITION_REQUIREMENTS.get(data['status'], [])
+        if 'resolution_notes' in required_fields and not data.get('resolution_notes', '').strip():
+            raise serializers.ValidationError({
+                'resolution_notes': (
+                    f'This field is required when setting status to "{data["status"]}".'
+                )
+            })
+        return data
 
 
 class ArchiveActionSerializer(serializers.Serializer):

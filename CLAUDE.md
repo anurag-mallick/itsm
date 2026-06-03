@@ -347,10 +347,20 @@ POST /api/problems/{id}/unlink-ticket/  body: {ticket_id}
 | B6 | `SystemConfig.update()` used bulk `.update()` — no audit trail | Fixed — per-key loop with AuditLog | ✅ Fixed |
 | B7 | SLA `sla_due_at` never set | Fixed — `Ticket.save()` auto-calculates from category | ✅ Fixed |
 | B8 | `settings/*.tsx` double `/api/` prefix | Fixed — removed prefix from all Settings pages | ✅ Fixed |
+| B9 | Audit logs for comments stored with comment UUID not ticket UUID | Fixed — `CommentListCreateView.perform_create` now stores ticket's UUID | ✅ Fixed |
+| B10 | Email notifications not sent on comment (console backend active) | Fixed — switched to real SMTP backend (`mail.bluspring.in:465 SSL`) | ✅ Fixed |
+| B11 | Email task failure caused 500 on comment API | Fixed — `CELERY_TASK_EAGER_PROPAGATES=False` in local settings | ✅ Fixed |
+| B12 | Email attachments: only images/PDFs accepted | Fixed — all file types accepted except executables; 25 MB limit | ✅ Fixed |
 
 ---
 
 ## Pending Tasks
+
+### Email Configuration (live — iRedMail)
+- **Inbound IMAP**: `testsupport@bluspring.in` on `mail.bluspring.in:993` SSL — polls every 30 seconds automatically
+- **Outbound SMTP**: `testsupport@bluspring.in` on `mail.bluspring.in:465` SSL/TLS
+- **Auto-polling**: Background thread in `EmailProcessorConfig.ready()` — starts 15s after Django boot
+- **Attachments**: All file types from email are saved as ticket attachments (except executables, max 25 MB)
 
 ### P1 — High Priority
 - [ ] **KB articles seed data** — knowledge base is empty. Add 5-10 sample articles via `setup_demo_data`

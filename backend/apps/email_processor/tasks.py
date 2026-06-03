@@ -1,16 +1,14 @@
-import email
 import logging
 import re
-from email import policy
-from email.headerregistry import Address
 
 from celery import shared_task
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
-# IMAP helpers
+# IMAP helpers (legacy single-mailbox — kept for env-var fallback)
 # ---------------------------------------------------------------------------
 
 def _connect_imap():
@@ -26,141 +24,91 @@ def _connect_imap():
     return client
 
 
-def _parse_email(raw_bytes):
-    """
-    Parse raw RFC-5322 bytes into a structured dict.
+# ---------------------------------------------------------------------------
+# Email parsing
+# ---------------------------------------------------------------------------
 
-    Returns:
-        {
-            from_email: str,
-            from_name: str,
-            subject: str,
-            body_text: str,
-            body_html: str,
-            message_id: str,
-            in_reply_to: str,
-            references: str,
-            to_addresses: list[str],
-            attachments: list[{filename, content_type, data}],
-        }
-    """
-    msg = email.message_from_bytes(raw_bytes, policy=policy.default)
+def _parse_email(raw_bytes: bytes) -> dict:
+    import email as email_lib
+    from email import policy as email_policy
+    msg = email_lib.message_from_bytes(raw_bytes, policy=email_policy.default)
 
-    # ---- From ----
-    from_header = msg.get('From', '')
-    from_email = ''
-    from_name = ''
-    try:
-        parsed_from = msg['From']
-        if hasattr(parsed_from, 'addresses') and parsed_from.addresses:
-            addr = parsed_from.addresses[0]
-            from_email = str(addr.addr_spec)
-            from_name = addr.display_name or ''
-        else:
-            # Fallback: raw parse
-            raw = str(from_header)
-            match = re.search(r'<([^>]+)>', raw)
-            if match:
-                from_email = match.group(1).strip()
-                from_name = raw[:raw.index('<')].strip().strip('"')
-            else:
-                from_email = raw.strip()
-    except Exception:
-        from_email = str(from_header)
-
-    # ---- To ----
-    to_addresses = []
-    try:
-        to_header = msg.get('To', '')
-        if hasattr(msg['To'], 'addresses'):
-            for addr in msg['To'].addresses:
-                to_addresses.append(str(addr.addr_spec).lower())
-        else:
-            # Fallback: extract all angle-bracket or bare addresses
-            for part in str(to_header).split(','):
-                m = re.search(r'<([^>]+)>', part)
-                if m:
-                    to_addresses.append(m.group(1).strip().lower())
-                else:
-                    cleaned = part.strip()
-                    if cleaned:
-                        to_addresses.append(cleaned.lower())
-    except Exception:
-        pass
-
-    # ---- Subject ----
-    subject = str(msg.get('Subject', ''))
-
-    # ---- Threading headers ----
-    message_id = str(msg.get('Message-ID', '')).strip()
-    in_reply_to = str(msg.get('In-Reply-To', '')).strip()
-    references = str(msg.get('References', '')).strip()
-
-    # ---- Body & attachments ----
-    body_text = ''
-    body_html = ''
-    attachments = []
-
-    if msg.is_multipart():
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            disposition = str(part.get_content_disposition() or '')
-
-            if 'attachment' in disposition or 'inline' in disposition:
-                filename = part.get_filename() or 'attachment'
-                try:
-                    data = part.get_payload(decode=True)
-                    attachments.append({
-                        'filename': filename,
-                        'content_type': content_type,
-                        'data': data,
-                    })
-                except Exception as exc:
-                    logger.warning('_parse_email: failed to decode attachment %s: %s', filename, exc)
-            elif content_type == 'text/plain' and not body_text:
-                try:
-                    body_text = part.get_payload(decode=True).decode(
-                        part.get_content_charset() or 'utf-8', errors='replace'
-                    )
-                except Exception:
-                    body_text = str(part.get_payload())
-            elif content_type == 'text/html' and not body_html:
-                try:
-                    body_html = part.get_payload(decode=True).decode(
-                        part.get_content_charset() or 'utf-8', errors='replace'
-                    )
-                except Exception:
-                    body_html = str(part.get_payload())
-    else:
-        content_type = msg.get_content_type()
-        try:
-            payload = msg.get_payload(decode=True).decode(
-                msg.get_content_charset() or 'utf-8', errors='replace'
-            )
-        except Exception:
-            payload = str(msg.get_payload())
-        if content_type == 'text/html':
-            body_html = payload
-        else:
-            body_text = payload
-
-    # If we have no plain text but have HTML, strip tags as fallback
-    if not body_text and body_html:
-        body_text = re.sub(r'<[^>]+>', ' ', body_html)
-        body_text = re.sub(r'\s+', ' ', body_text).strip()
-
-    return {
-        'from_email': from_email,
-        'from_name': from_name,
-        'subject': subject,
-        'body_text': body_text,
-        'body_html': body_html,
-        'message_id': message_id,
-        'in_reply_to': in_reply_to,
-        'references': references,
-        'to_addresses': to_addresses,
-        'attachments': attachments,
+    result = {
+        'from_email': '',
+        'from_name': '',
+        'subject': '',
+        'body_text': '',
+        'body_html': '',
+        'message_id': msg.get('Message-ID', ''),
+        'in_reply_to': msg.get('In-Reply-To', ''),
+        'references': msg.get('References', ''),
+        'to_addresses': [],
+        'attachments': [],   # list of {filename, content_type, data: bytes, inline: bool, cid: str}
     }
+
+    # Parse From header
+    from_header = msg.get('From', '')
+    try:
+        from email.utils import parseaddr
+        name, addr = parseaddr(from_header)
+        result['from_email'] = addr.lower().strip()
+        result['from_name'] = name
+    except Exception:
+        result['from_email'] = from_header.lower().strip()
+
+    # Parse To/CC headers for ticket routing
+    for hdr in ['To', 'Cc']:
+        val = msg.get(hdr, '')
+        if val:
+            from email.utils import getaddresses
+            result['to_addresses'] += [addr for _, addr in getaddresses([val]) if addr]
+
+    result['subject'] = str(msg.get('Subject', '(No Subject)'))
+
+    # Walk MIME parts
+    cid_map = {}  # content-id -> attachment index (for inline image replacement)
+    for part in msg.walk():
+        ct = part.get_content_type()
+        cd = str(part.get('Content-Disposition') or '')
+        cid_raw = part.get('Content-ID', '')
+        cid = cid_raw.strip('<>') if cid_raw else ''
+
+        if ct == 'text/plain' and not result['body_text']:
+            try:
+                result['body_text'] = part.get_content()
+            except Exception:
+                pass
+        elif ct == 'text/html' and not result['body_html']:
+            try:
+                result['body_html'] = part.get_content()
+            except Exception:
+                pass
+        elif ct.startswith('image/') or ('attachment' in cd.lower()):
+            # Extract all images and file attachments
+            try:
+                data = part.get_payload(decode=True)
+                if data:
+                    filename = part.get_filename() or f'attachment.{ct.split("/")[-1]}'
+                    is_inline = 'inline' in cd.lower() or (cid and 'attachment' not in cd.lower())
+                    att = {
+                        'filename': filename,
+                        'content_type': ct,
+                        'data': data,
+                        'inline': is_inline,
+                        'cid': cid,
+                    }
+                    idx = len(result['attachments'])
+                    result['attachments'].append(att)
+                    if cid:
+                        cid_map[cid] = idx
+            except Exception:
+                pass
+
+    # Use HTML body as fallback for text body
+    if not result['body_text'] and result['body_html']:
+        result['body_text'] = re.sub(r'<[^>]+>', ' ', result['body_html']).strip()
+
+    return result
 
 
 def _extract_ticket_number(subject, to_addresses):
@@ -170,12 +118,10 @@ def _extract_ticket_number(subject, to_addresses):
       - any To address: 'helpdesk+ticket-TKT-00001@domain.com'
     Returns None if not found.
     """
-    # Check subject pattern: [Ticket #TKT-XXXXX]
     subject_match = re.search(r'\[Ticket\s+#(TKT-\d+)\]', subject, re.IGNORECASE)
     if subject_match:
         return subject_match.group(1).upper()
 
-    # Check plus-address pattern in any To address
     for addr in to_addresses:
         plus_match = re.search(r'\+ticket-(TKT-\d+)@', addr, re.IGNORECASE)
         if plus_match:
@@ -184,53 +130,61 @@ def _extract_ticket_number(subject, to_addresses):
     return None
 
 
-def _save_email_attachments(ticket, comment, parsed_attachments, user):
-    """Save parsed attachments to the database and associate with the ticket/comment."""
+def _save_email_attachments(ticket, attachments: list, uploaded_by=None, comment=None):
+    """Save ALL email attachments — images, PDFs, Office docs, ZIPs, any type."""
     import os
     from django.core.files.base import ContentFile
     from apps.tickets.models import Attachment
 
-    for att in parsed_attachments:
-        filename = att.get('filename') or 'attachment'
-        data = att.get('data')
+    # Block only truly dangerous executable types — accept everything else
+    BLOCKED_TYPES = {
+        'application/x-msdownload', 'application/x-executable',
+        'application/x-sh', 'application/x-bat',
+    }
+    BLOCKED_EXTENSIONS = {'.exe', '.bat', '.cmd', '.sh', '.msi', '.vbs', '.ps1'}
+
+    MAX_SIZE = 25 * 1024 * 1024  # 25 MB per attachment
+
+    for att in attachments:
+        ct  = att.get('content_type', 'application/octet-stream')
+        data = att.get('data', b'')
+
         if not data:
             continue
-
-        file_size = len(data)
-        if file_size > settings.MAX_UPLOAD_SIZE_BYTES:
-            logger.warning(
-                '_save_email_attachments: skipping attachment %s: size %d exceeds limit',
-                filename, file_size,
-            )
+        if ct in BLOCKED_TYPES:
+            logger.warning(f'Skipped blocked attachment type: {ct}')
+            continue
+        if len(data) > MAX_SIZE:
+            logger.warning(f'Skipped oversized attachment ({len(data)} bytes)')
             continue
 
+        filename = att.get('filename') or f'attachment.{ct.split("/")[-1]}'
+        filename = os.path.basename(filename).replace('..', '').strip() or 'attachment'
         ext = os.path.splitext(filename)[1].lower()
-        if ext not in settings.ALLOWED_UPLOAD_EXTENSIONS:
-            logger.warning(
-                '_save_email_attachments: skipping attachment %s: extension %s not allowed',
-                filename, ext,
-            )
+        if ext in BLOCKED_EXTENSIONS:
+            logger.warning(f'Skipped blocked extension: {ext}')
             continue
+
+        filename = att.get('filename', 'attachment')
+        # Sanitize filename
+        filename = os.path.basename(filename).replace('..', '').strip() or 'attachment'
 
         try:
-            content_file = ContentFile(data, name=filename)
-            Attachment.objects.create(
+            attachment = Attachment(
                 ticket=ticket,
                 comment=comment,
-                file=content_file,
                 original_filename=filename,
-                file_size=file_size,
-                uploaded_by=user,
+                file_size=len(data),
+                uploaded_by=uploaded_by,
             )
-            logger.info(
-                '_save_email_attachments: saved attachment %s for ticket %s',
-                filename, ticket.ticket_number,
-            )
-        except Exception as exc:
-            logger.error('_save_email_attachments: failed to save attachment %s: %s', filename, exc)
+            attachment.file.save(filename, ContentFile(data), save=True)
+            logger.info(f'Saved attachment: {filename} ({len(data)} bytes) for {ticket.ticket_number}')
+        except Exception as e:
+            logger.warning(f'Could not save attachment {filename}: {e}')
 
 
-def _create_ticket_from_email(parsed):
+def _create_ticket_from_email(parsed, default_category=None, default_priority='medium',
+                               reply_to_address=None):
     """Create a new Ticket from a parsed inbound email."""
     from apps.accounts.models import User
     from apps.tickets.models import Category, Ticket
@@ -245,8 +199,11 @@ def _create_ticket_from_email(parsed):
 
     user, _ = User.objects.get_or_create_guest(sender_email, sender_name)
 
-    # Use the first active category as default, or None
-    category = Category.objects.filter(is_active=True).first()
+    # Use per-mailbox default category if provided; otherwise fall back to first active category
+    if default_category is not None:
+        category = default_category
+    else:
+        category = Category.objects.filter(is_active=True).first()
 
     assignee = category.default_assignee if category else None
 
@@ -260,17 +217,19 @@ def _create_ticket_from_email(parsed):
         requestor=user,
         category=category,
         assignee=assignee,
+        priority=default_priority,
         email_message_id=parsed['message_id'],
     )
 
     logger.info(
-        '_create_ticket_from_email: created ticket %s from %s',
+        '_create_ticket_from_email: created ticket %s from %s (mailbox: %s)',
         ticket.ticket_number,
         sender_email,
+        reply_to_address or 'default',
     )
 
     if parsed.get('attachments'):
-        _save_email_attachments(ticket, None, parsed['attachments'], user)
+        _save_email_attachments(ticket, parsed['attachments'], uploaded_by=user)
 
     send_ticket_notification.delay(str(ticket.id), 'created')
     return ticket
@@ -309,17 +268,18 @@ def _add_comment_from_email(ticket, parsed):
     )
 
     if parsed.get('attachments'):
-        _save_email_attachments(ticket, comment, parsed['attachments'], user)
+        _save_email_attachments(ticket, parsed['attachments'], uploaded_by=user, comment=comment)
 
     send_ticket_notification.delay(str(ticket.id), 'commented', str(comment.id))
     return comment
 
 
 # ---------------------------------------------------------------------------
-# Shared processing helper — used by both IMAP and POP3 tasks
+# Shared processing helper
 # ---------------------------------------------------------------------------
 
-def _process_raw_messages(raw_messages):
+def _process_raw_messages(raw_messages, default_category=None, default_priority='medium',
+                           reply_to_address=None):
     """
     Parse and route a list of raw RFC-5322 message bytes.
     Creates or updates tickets as appropriate.
@@ -327,45 +287,183 @@ def _process_raw_messages(raw_messages):
     """
     from apps.tickets.models import Ticket
 
-    processed = 0
-    for raw_bytes in raw_messages:
+    count = 0
+    for raw in raw_messages:
         try:
-            parsed = _parse_email(raw_bytes)
-
+            parsed = _parse_email(raw)
             ticket_number = _extract_ticket_number(
                 parsed['subject'],
-                parsed['to_addresses'],
+                parsed.get('to_addresses', []),
             )
-
             if ticket_number:
                 try:
-                    ticket = Ticket.objects.get(ticket_number=ticket_number)
+                    ticket = Ticket.objects.get(ticket_number__iexact=ticket_number)
                     _add_comment_from_email(ticket, parsed)
                 except Ticket.DoesNotExist:
                     logger.warning(
                         '_process_raw_messages: ticket %s not found, creating new ticket instead',
                         ticket_number,
                     )
-                    _create_ticket_from_email(parsed)
+                    _create_ticket_from_email(
+                        parsed,
+                        default_category=default_category,
+                        default_priority=default_priority,
+                        reply_to_address=reply_to_address,
+                    )
             else:
-                _create_ticket_from_email(parsed)
-
-            processed += 1
+                _create_ticket_from_email(
+                    parsed,
+                    default_category=default_category,
+                    default_priority=default_priority,
+                    reply_to_address=reply_to_address,
+                )
+            count += 1
         except Exception as exc:
-            logger.error('_process_raw_messages: error processing message: %s', exc, exc_info=True)
+            logger.error(
+                '_process_raw_messages: error processing message: %s', exc, exc_info=True
+            )
 
-    return processed
+    return count
+
+
+# ---------------------------------------------------------------------------
+# Multi-mailbox fetchers (database-driven)
+# ---------------------------------------------------------------------------
+
+def _fetch_imap_from_mailbox(mailbox) -> list:
+    """Fetch raw message bytes from an InboundMailbox via IMAP."""
+    import imapclient
+
+    conn = imapclient.IMAPClient(
+        mailbox.host, port=mailbox.port, ssl=mailbox.use_ssl, timeout=30
+    )
+    conn.login(mailbox.username, mailbox.password)
+    conn.select_folder(mailbox.imap_folder)
+    uids = conn.search(['UNSEEN'])
+    if not uids:
+        conn.logout()
+        return []
+
+    raw_messages = []
+    # Ensure processed folder exists
+    try:
+        conn.create_folder(mailbox.processed_folder)
+    except Exception:
+        pass
+
+    for uid in uids:
+        try:
+            data = conn.fetch([uid], ['RFC822'])
+            raw = data[uid][b'RFC822']
+            raw_messages.append(raw)
+            conn.copy([uid], mailbox.processed_folder)
+            conn.delete_messages([uid])
+        except Exception as e:
+            logger.error('IMAP: failed on UID %s for mailbox %s: %s', uid, mailbox.email_address, e)
+
+    conn.expunge()
+    conn.logout()
+    logger.info('IMAP %s: retrieved %d message(s)', mailbox.email_address, len(raw_messages))
+    return raw_messages
+
+
+def _fetch_pop3_from_mailbox(mailbox) -> list:
+    """Fetch raw message bytes from an InboundMailbox via POP3."""
+    import poplib
+
+    if mailbox.use_ssl:
+        conn = poplib.POP3_SSL(mailbox.host, mailbox.port, timeout=30)
+    else:
+        conn = poplib.POP3(mailbox.host, mailbox.port)
+    conn.user(mailbox.username)
+    conn.pass_(mailbox.password)
+    num = len(conn.list()[1])
+    raw_messages = []
+    for i in range(1, num + 1):
+        try:
+            lines = conn.retr(i)[1]
+            raw_messages.append(b'\r\n'.join(lines))
+            conn.dele(i)
+        except Exception as e:
+            logger.error(
+                'POP3: failed on message %d for mailbox %s: %s', i, mailbox.email_address, e
+            )
+    conn.quit()
+    logger.info('POP3 %s: retrieved %d message(s)', mailbox.email_address, len(raw_messages))
+    return raw_messages
 
 
 # ---------------------------------------------------------------------------
 # Main periodic tasks
 # ---------------------------------------------------------------------------
 
+@shared_task(queue='default', name='email_processor.poll_all_mailboxes')
+def poll_all_inbound_mailboxes():
+    """
+    Master task called by Celery Beat every 60 seconds.
+    Fans out to one task per active InboundMailbox.
+    Falls back to legacy single-mailbox env-var config if no mailboxes are in DB.
+    """
+    try:
+        from apps.email_config.models import InboundMailbox
+        active_mailboxes = list(InboundMailbox.objects.filter(is_active=True))
+    except Exception:
+        active_mailboxes = []
+
+    if active_mailboxes:
+        for mailbox in active_mailboxes:
+            poll_single_mailbox.delay(str(mailbox.id))
+    else:
+        # Legacy fallback — original single-mailbox behaviour
+        poll_imap_mailbox.apply_async()
+
+
+@shared_task(queue='email', name='email_processor.poll_single_mailbox', bind=True, max_retries=2)
+def poll_single_mailbox(self, mailbox_id: str):
+    """Poll one InboundMailbox and process its emails."""
+    from django.utils import timezone
+
+    try:
+        from apps.email_config.models import InboundMailbox
+        mailbox = InboundMailbox.objects.get(id=mailbox_id)
+    except Exception as e:
+        logger.error('poll_single_mailbox: mailbox %s not found: %s', mailbox_id, e)
+        return
+
+    logger.info('Polling %s mailbox: %s', mailbox.protocol.upper(), mailbox.email_address)
+
+    try:
+        if mailbox.protocol == 'imap':
+            raw_messages = _fetch_imap_from_mailbox(mailbox)
+        else:
+            raw_messages = _fetch_pop3_from_mailbox(mailbox)
+
+        count = _process_raw_messages(
+            raw_messages,
+            default_category=mailbox.default_category,
+            default_priority=mailbox.default_priority,
+            reply_to_address=mailbox.email_address,
+        )
+
+        mailbox.last_polled_at = timezone.now()
+        mailbox.last_error = ''
+        mailbox.emails_processed = (mailbox.emails_processed or 0) + count
+        mailbox.save(update_fields=['last_polled_at', 'last_error', 'emails_processed'])
+
+    except Exception as exc:
+        mailbox.last_polled_at = timezone.now()
+        mailbox.last_error = str(exc)[:500]
+        mailbox.save(update_fields=['last_polled_at', 'last_error'])
+        logger.error('Error polling %s: %s', mailbox.email_address, exc)
+        raise self.retry(exc=exc, countdown=30)
+
+
 @shared_task(queue='default', name='email_processor.poll_imap')
 def poll_imap_mailbox():
     """
-    Poll the iRedMail IMAP mailbox.
-    Scheduled via celery-beat (every 60 seconds).
+    Legacy single-mailbox IMAP task.
+    Retained as fallback when no InboundMailbox records are configured.
+    Scheduled by poll_all_inbound_mailboxes when the DB contains no active mailboxes.
 
     For each UNSEEN message in INBOX:
       1. Parse the email.
@@ -399,7 +497,6 @@ def poll_imap_mailbox():
 
         logger.info('poll_imap_mailbox: found %d unseen message(s)', len(uids))
 
-        # Ensure the processed folder exists
         try:
             if not client.folder_exists(processed_folder):
                 client.create_folder(processed_folder)
@@ -422,7 +519,6 @@ def poll_imap_mailbox():
                 raw_bytes = raw_data[uid][b'RFC822']
                 _process_raw_messages([raw_bytes])
 
-                # Copy to processed folder and mark for deletion
                 try:
                     client.copy([uid], processed_folder)
                 except Exception as copy_exc:
@@ -444,10 +540,7 @@ def poll_imap_mailbox():
         if messages_to_expunge:
             try:
                 client.expunge()
-                logger.info(
-                    'poll_imap_mailbox: expunged %d message(s)',
-                    len(messages_to_expunge),
-                )
+                logger.info('poll_imap_mailbox: expunged %d message(s)', len(messages_to_expunge))
             except Exception as exc:
                 logger.error('poll_imap_mailbox: expunge failed: %s', exc)
 
@@ -463,11 +556,8 @@ def poll_imap_mailbox():
 @shared_task(queue='default', name='email_processor.poll_pop3')
 def poll_pop3_mailbox():
     """
-    Poll the POP3 mailbox.
-    Scheduled via celery-beat (every 60 seconds) when EMAIL_INBOUND_PROTOCOL=pop3.
-
-    Downloads all messages from the server, deletes them after retrieval,
-    then routes each one as a new ticket or as a reply to an existing ticket.
+    Legacy single-mailbox POP3 task.
+    Retained as fallback when no InboundMailbox records are configured.
     """
     from .pop3_handler import fetch_pop3_emails
 

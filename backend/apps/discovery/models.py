@@ -57,6 +57,11 @@ class DiscoveredDevice(models.Model):
     open_ports = models.JSONField(default=list)    # [22, 80, 443, ...]
     snmp_info = models.JSONField(default=dict)     # sysDescr, sysName, etc.
     ssh_info = models.JSONField(default=dict)      # hostname, os, cpu, ram
+    port_services = models.JSONField(default=dict)  # {port: service_name}
+    banners = models.JSONField(default=dict)        # {port: banner_text}
+    rdp_available = models.BooleanField(default=False)
+    ssh_available = models.BooleanField(default=False)
+    vnc_available = models.BooleanField(default=False)
     device_type = models.CharField(max_length=50, blank=True)  # server/printer/router/workstation
     status = models.CharField(
         max_length=15, choices=STATUS_CHOICES, default=STATUS_NEW, db_index=True

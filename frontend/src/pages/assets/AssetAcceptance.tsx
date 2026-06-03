@@ -32,7 +32,10 @@ type PageState = 'loading' | 'error' | 'actioned' | 'pending' | 'done'
 // Helpers
 // ---------------------------------------------------------------------------
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api').replace(/\/$/, '')
+const API_BASE = (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
+  ? window.location.origin + '/api'
+  : 'http://localhost:8000/api'
+)
 
 function buildUrl(assetId: string, suffix = '') {
   return `${API_BASE}/assets/hardware/${assetId}/accept${suffix}/`

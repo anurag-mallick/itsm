@@ -287,6 +287,33 @@ class Command(BaseCommand):
             )
             self._ok(f'CatalogItem: {item_data["name"]}', created)
 
+    # ── inbound mailbox ───────────────────────────────────────────────────────
+    def _seed_email_config(self):
+        try:
+            from apps.email_config.models import InboundMailbox
+            if not InboundMailbox.objects.exists():
+                InboundMailbox.objects.create(
+                    name='IT Helpdesk (iRedMail)',
+                    email_address='helpdesk@helpdesk.local',
+                    protocol='imap',
+                    host='192.168.1.x',               # placeholder — update in Settings
+                    port=993,
+                    username='helpdesk@helpdesk.local',
+                    password='changeme',               # placeholder — update in Settings
+                    use_ssl=True,
+                    imap_folder='INBOX',
+                    processed_folder='INBOX.Processed',
+                    is_active=False,                   # disabled until configured
+                    default_priority='medium',
+                )
+                self.stdout.write(
+                    '  Created: Demo InboundMailbox (disabled — configure in Settings > Email)'
+                )
+            else:
+                self.stdout.write('  Exists : InboundMailbox records')
+        except Exception:
+            pass  # app may not be migrated yet
+
     # ── handle ────────────────────────────────────────────────────────────────
     def handle(self, *args, **options):
         self.stdout.write('\n--- Seeding ticket categories ---')
@@ -300,6 +327,9 @@ class Command(BaseCommand):
 
         self.stdout.write('\n--- Seeding service catalog ---')
         self._seed_catalog()
+
+        self.stdout.write('\n--- Seeding email config ---')
+        self._seed_email_config()
 
         self.stdout.write(self.style.SUCCESS('\nDemo data seeded successfully.\n'))
         self.stdout.write('Demo accounts:')

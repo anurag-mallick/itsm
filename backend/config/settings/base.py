@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'apps.catalog',
     'apps.knowledge',
     'apps.problems',
+    'apps.email_config',
 ]
 
 MIDDLEWARE = [
@@ -160,15 +161,19 @@ CELERY_TASK_ROUTES = {
     'apps.*.tasks.send_teams*': {'queue': 'notifications'},
 }
 
-# --- Email (iRedMail SMTP) ---
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = os.environ.get('SMTP_HOST', 'localhost')
-EMAIL_PORT = int(os.environ.get('SMTP_PORT', '587'))
-EMAIL_HOST_USER = os.environ.get('SMTP_USER', '')
+# ── Email (iRedMail SMTP) ─────────────────────────────────────────────────────
+EMAIL_BACKEND    = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST       = os.environ.get('SMTP_HOST', '')
+EMAIL_PORT       = int(os.environ.get('SMTP_PORT', '465'))
+EMAIL_HOST_USER  = os.environ.get('SMTP_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('SMTP_PASSWORD', '')
-EMAIL_USE_TLS = os.environ.get('SMTP_USE_TLS', 'True') == 'True'
-DEFAULT_FROM_EMAIL = os.environ.get('EMAIL_FROM', 'helpdesk@yourdomain.local')
-SERVER_EMAIL = DEFAULT_FROM_EMAIL
+# Port 465 = SSL/TLS (EMAIL_USE_SSL=True, EMAIL_USE_TLS=False)
+# Port 587 = STARTTLS  (EMAIL_USE_TLS=True, EMAIL_USE_SSL=False)
+_smtp_port = int(os.environ.get('SMTP_PORT', '465'))
+EMAIL_USE_SSL    = _smtp_port == 465
+EMAIL_USE_TLS    = _smtp_port == 587
+DEFAULT_FROM_EMAIL = os.environ.get('EMAIL_FROM', os.environ.get('SMTP_USER', 'helpdesk@company.local'))
+SERVER_EMAIL     = DEFAULT_FROM_EMAIL
 
 # --- IMAP (iRedMail inbound) ---
 IMAP_HOST = os.environ.get('IMAP_HOST', '')

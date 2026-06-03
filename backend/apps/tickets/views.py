@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -120,14 +121,16 @@ class TicketListCreateView(AuditMixin, generics.ListCreateAPIView):
         return qs
 
     def perform_create(self, serializer):
-        instance = serializer.save()
+        with transaction.atomic():
+            instance = serializer.save()
         AuditLog.log(
             user=self.request.user,
             action=AuditLog.CREATE,
             module='tickets',
-            record_id=instance.pk,
-            record_repr=str(instance),
-            new_value={'ticket_number': instance.ticket_number, 'subject': instance.subject},
+            record_id=str(instance.pk),  # UUID string for consistent filtering
+            record_repr=f'{instance.ticket_number} created: {instance.subject}',
+            new_value={'ticket_number': instance.ticket_number, 'subject': instance.subject,
+                       'priority': instance.priority, 'status': instance.status},
             ip_address=self._ip(),
             user_agent=self.request.META.get('HTTP_USER_AGENT', ''),
         )
@@ -190,21 +193,32 @@ class TicketAssignView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsITAgent]
 
     def post(self, request, pk):
-        ticket = get_object_or_404(Ticket, pk=pk)
-        assignee_id = request.data.get('assignee')
-        if not assignee_id:
-            return Response({'detail': 'assignee field is required.'}, status=status.HTTP_400_BAD_REQUEST)
-
         from apps.accounts.models import User
-        try:
-            assignee = User.objects.get(pk=assignee_id)
-        except User.DoesNotExist:
-            return Response({'detail': 'Assignee not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        old_assignee = ticket.assignee
-        ticket.assignee = assignee
-        ticket.save(update_fields=['assignee', 'updated_at'])
+        with transaction.atomic():
+            # select_for_update acquires a row-level lock — prevents double-assignment
+            ticket = get_object_or_404(
+                Ticket.all_records.select_for_update(), pk=pk
+            )
+            assignee_id = request.data.get('assignee')
+            if not assignee_id:
+                return Response(
+                    {'detail': 'assignee field is required.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                assignee = User.objects.get(pk=assignee_id)
+            except User.DoesNotExist:
+                return Response(
+                    {'detail': 'Assignee not found.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
+            old_assignee = ticket.assignee
+            ticket.assignee = assignee
+            ticket.save(update_fields=['assignee', 'updated_at'])
+
+        # Audit log and notifications run outside the transaction
         AuditLog.log(
             user=request.user,
             action=AuditLog.UPDATE,
@@ -233,28 +247,31 @@ class TicketStatusView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsITAgent]
 
     def post(self, request, pk):
-        ticket = get_object_or_404(Ticket, pk=pk)
-        new_status = request.data.get('status')
-        valid_statuses = [s[0] for s in Ticket.STATUS_CHOICES]
-        if not new_status or new_status not in valid_statuses:
-            return Response(
-                {'detail': f'status must be one of: {valid_statuses}'},
-                status=status.HTTP_400_BAD_REQUEST,
+        with transaction.atomic():
+            # select_for_update acquires a row-level lock — prevents concurrent status races
+            ticket = get_object_or_404(
+                Ticket.all_records.select_for_update(), pk=pk
             )
+            new_status = (request.data.get('status') or '').strip()
+            resolution_notes = (request.data.get('resolution_notes') or '').strip()
 
-        old_status = ticket.status
-        ticket.status = new_status
-        update_fields = ['status', 'updated_at']
+            if not new_status:
+                return Response(
+                    {'detail': 'status is required.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-        if new_status == Ticket.RESOLVED and not ticket.resolved_at:
-            ticket.resolved_at = timezone.now()
-            update_fields.append('resolved_at')
-        if new_status == Ticket.CLOSED and not ticket.closed_at:
-            ticket.closed_at = timezone.now()
-            update_fields.append('closed_at')
+            old_status = ticket.status
+            try:
+                ticket.transition_to(
+                    new_status,
+                    resolution_notes=resolution_notes,
+                    actor=request.user,
+                )
+            except ValueError as exc:
+                return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        ticket.save(update_fields=update_fields)
-
+        # Audit log and notifications run outside the transaction
         AuditLog.log(
             user=request.user,
             action=AuditLog.UPDATE,
@@ -379,12 +396,14 @@ class CommentListCreateView(AuditMixin, generics.ListCreateAPIView):
     def perform_create(self, serializer):
         ticket = self._get_ticket()
         instance = serializer.save(ticket=ticket, author=self.request.user)
+        # Store record_id = TICKET pk so ActivityFeed queries work correctly
         AuditLog.log(
             user=self.request.user,
             action=AuditLog.CREATE,
             module='tickets',
-            record_id=instance.pk,
-            record_repr=str(instance),
+            record_id=str(ticket.pk),          # ticket UUID, not comment UUID
+            record_repr=f'Comment on {ticket.ticket_number}: {instance.body[:80]}',
+            new_value={'comment_type': instance.comment_type, 'body': instance.body[:200]},
             ip_address=self._ip(),
             user_agent=self.request.META.get('HTTP_USER_AGENT', ''),
         )

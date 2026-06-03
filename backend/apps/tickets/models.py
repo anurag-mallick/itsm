@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 from django.db import models, transaction
 from django.utils import timezone
 from apps.accounts.models import User
@@ -81,6 +82,29 @@ class Ticket(models.Model):
         (CLOSED, 'Closed'),
     ]
 
+    # State machine aliases — used by transition_to() and VALID_TRANSITIONS
+    STATUS_OPEN        = OPEN
+    STATUS_IN_PROGRESS = IN_PROGRESS
+    STATUS_PENDING     = PENDING_INFO   # "pending_info" is the stored value
+    STATUS_RESOLVED    = RESOLVED
+    STATUS_CLOSED      = CLOSED
+
+    # ── State machine ──────────────────────────────────────────────────────────
+    # Legal state transitions — (from_status → [allowed to_statuses])
+    VALID_TRANSITIONS: dict = {
+        OPEN:         [IN_PROGRESS, PENDING_INFO, CLOSED],
+        IN_PROGRESS:  [OPEN, PENDING_INFO, RESOLVED, CLOSED],
+        PENDING_INFO: [OPEN, IN_PROGRESS],
+        RESOLVED:     [CLOSED, OPEN],
+        CLOSED:       [],  # terminal — use archive for hiding
+    }
+
+    # Fields that MUST be non-empty when transitioning TO this status
+    TRANSITION_REQUIREMENTS: dict = {
+        RESOLVED: ['resolution_notes'],
+        CLOSED:   ['resolution_notes'],
+    }
+
     # Priority constants
     LOW = 'low'
     MEDIUM = 'medium'
@@ -136,6 +160,9 @@ class Ticket(models.Model):
     sla_breached = models.BooleanField(default=False)
     resolved_at = models.DateTimeField(null=True, blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)
+    resolution_notes = models.TextField(blank=True)
+    sla_paused_at = models.DateTimeField(null=True, blank=True)
+    sla_paused_seconds = models.PositiveIntegerField(default=0)
     # Used for email threading (In-Reply-To / References headers)
     email_message_id = models.CharField(max_length=255, blank=True)
     teams_conversation_id = models.CharField(max_length=255, blank=True)
@@ -161,6 +188,69 @@ class Ticket(models.Model):
     def __str__(self):
         return self.ticket_number
 
+    # ── State machine method ───────────────────────────────────────────────────
+
+    def transition_to(self, new_status: str, resolution_notes: str = '', actor=None) -> None:
+        """
+        Validate and execute a status transition.
+        Raises ValueError on illegal transitions or missing required fields.
+        Handles SLA pause/resume automatically.
+        """
+        allowed = self.VALID_TRANSITIONS.get(self.status, [])
+        if new_status not in allowed:
+            raise ValueError(
+                f'Cannot transition from "{self.status}" to "{new_status}". '
+                f'Allowed: {allowed or ["none — this is a terminal state"]}.'
+            )
+
+        # Check required fields
+        for field in self.TRANSITION_REQUIREMENTS.get(new_status, []):
+            value = resolution_notes if field == 'resolution_notes' else getattr(self, field, '')
+            if not value or not str(value).strip():
+                raise ValueError(
+                    f'"{field}" is required when setting status to "{new_status}".'
+                )
+
+        now = timezone.now()
+
+        # ── SLA pause / resume ─────────────────────────────────────────────────
+        if new_status == self.STATUS_PENDING and self.sla_paused_at is None:
+            # Entering pending → pause the SLA clock
+            self.sla_paused_at = now
+
+        elif self.sla_paused_at is not None and new_status != self.STATUS_PENDING:
+            # Leaving pending → add paused duration to sla_due_at
+            paused = (now - self.sla_paused_at).total_seconds()
+            self.sla_paused_seconds += int(paused)
+            if self.sla_due_at:
+                self.sla_due_at = self.sla_due_at + timedelta(seconds=int(paused))
+            self.sla_paused_at = None
+
+        # ── Apply transition ───────────────────────────────────────────────────
+        old_status = self.status
+        self.status = new_status
+
+        if resolution_notes:
+            self.resolution_notes = resolution_notes
+
+        if new_status == self.STATUS_RESOLVED:
+            self.resolved_at = now
+        elif new_status == self.STATUS_CLOSED:
+            self.closed_at = now
+        elif new_status in (self.STATUS_OPEN, self.STATUS_IN_PROGRESS) and \
+                old_status in (self.STATUS_RESOLVED, self.STATUS_CLOSED):
+            # Reopening: clear resolved/closed timestamps
+            self.resolved_at = None
+            self.closed_at = None
+            self.sla_breached = False
+
+        self.save(update_fields=[
+            'status', 'resolution_notes', 'sla_paused_at', 'sla_paused_seconds',
+            'sla_due_at', 'resolved_at', 'closed_at', 'sla_breached',
+        ])
+
+    # ── Base save ─────────────────────────────────────────────────────────────
+
     def save(self, *args, **kwargs):
         if not self.ticket_number:
             seq = TicketCounter.next()
@@ -170,13 +260,12 @@ class Ticket(models.Model):
         if not self.sla_due_at and self.category_id:
             try:
                 from apps.tickets.models import Category as _Category
-                from datetime import timedelta
                 cat = _Category.objects.get(id=self.category_id)
                 self.sla_due_at = timezone.now() + timedelta(hours=cat.sla_resolution_hours)
             except Exception:
                 pass
 
-        # Auto-set timestamps based on status transitions
+        # Auto-set timestamps based on status transitions (fallback for direct .save() calls)
         now = timezone.now()
         if self.status == self.RESOLVED and not self.resolved_at:
             self.resolved_at = now

@@ -44,13 +44,18 @@ def run_discovery_scan(self, scan_id: str):
                 hostname=d.get('hostname', ''),
                 mac_address=d.get('mac_address', ''),
                 os_info=d.get('os_info', ''),
+                device_type=d.get('device_type', 'other'),
                 open_ports=d.get('open_ports', []),
+                port_services=d.get('port_services', {}),
                 snmp_info=d.get('snmp_info', {}),
                 ssh_info=d.get('ssh_info', {}),
+                banners=d.get('banners', {}),
+                rdp_available=d.get('rdp_available', False),
+                ssh_available=d.get('ssh_available', False),
+                vnc_available=d.get('vnc_available', False),
                 status=status,
                 matched_asset=matched,
             )
-            dd.device_type = dd.guess_asset_type()
             dd.save()
 
         scan.status = DiscoveryScan.STATUS_COMPLETED

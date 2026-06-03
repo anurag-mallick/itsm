@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'apps.knowledge',
     'apps.problems',
     'apps.email_config',
+    'apps.workflows',
 ]
 
 MIDDLEWARE = [

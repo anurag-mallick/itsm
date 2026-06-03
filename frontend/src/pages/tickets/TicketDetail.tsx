@@ -51,6 +51,16 @@ interface Ticket {
   archived_at: string | null
   archived_by_email: string | null
   archive_reason: string
+  attachments: Attachment[]
+}
+
+interface Attachment {
+  id: string
+  file: string            // absolute URL e.g. http://localhost:8000/media/...
+  original_filename: string
+  file_size: number
+  uploaded_by_email: string | null
+  created_at: string
 }
 
 interface Comment {
@@ -62,6 +72,7 @@ interface Comment {
   comment_type: 'reply' | 'note'
   source: string
   created_at: string
+  attachments?: Attachment[]
 }
 
 interface CannedResponse {
@@ -544,6 +555,63 @@ export default function TicketDetail() {
               <Text type="secondary">No description provided.</Text>
             )}
           </Card>
+
+          {/* Attachments — images and files from email or uploads */}
+          {ticket.attachments && ticket.attachments.length > 0 && (
+            <Card
+              title={`Attachments (${ticket.attachments.length})`}
+              size="small"
+            >
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                {ticket.attachments.map(att => {
+                  const isImage = /\.(png|jpg|jpeg|gif|webp|bmp|svg)$/i.test(att.original_filename)
+                  const sizeKB = Math.round((att.file_size || 0) / 1024)
+                  return (
+                    <div key={att.id} style={{ textAlign: 'center', maxWidth: 140 }}>
+                      {isImage ? (
+                        <a href={att.file} target="_blank" rel="noreferrer">
+                          <img
+                            src={att.file}
+                            alt={att.original_filename}
+                            style={{
+                              width: 120, height: 90, objectFit: 'cover',
+                              borderRadius: 6, border: '1px solid #f0f0f0',
+                              display: 'block', cursor: 'pointer',
+                            }}
+                            onError={e => {
+                              (e.target as HTMLImageElement).style.display = 'none'
+                            }}
+                          />
+                        </a>
+                      ) : (
+                        <a
+                          href={att.file}
+                          download={att.original_filename}
+                          style={{
+                            display: 'flex', flexDirection: 'column', alignItems: 'center',
+                            padding: '12px 8px', border: '1px solid #f0f0f0',
+                            borderRadius: 6, textDecoration: 'none', color: '#595959',
+                            width: 120, cursor: 'pointer',
+                          }}
+                        >
+                          <span style={{ fontSize: 28 }}>📎</span>
+                          <span style={{ fontSize: 11, marginTop: 4, textAlign: 'center',
+                            wordBreak: 'break-all', lineHeight: 1.3 }}>
+                            {att.original_filename.length > 20
+                              ? att.original_filename.slice(0, 18) + '…'
+                              : att.original_filename}
+                          </span>
+                        </a>
+                      )}
+                      <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>
+                        {sizeKB > 0 ? `${sizeKB} KB` : ''}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </Card>
+          )}
 
           {/* Comments + Activity tabs */}
           <Card size="small" bodyStyle={{ padding: 0 }}>

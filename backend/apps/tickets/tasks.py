@@ -87,15 +87,31 @@ _EVENT_HEADERS = {
 
 
 def _get_reply_to(ticket_number):
-    """Build the Reply-To address for email threading."""
+    """
+    Build the Reply-To address for email threading.
+    Uses the ACTUAL configured inbound mailbox with plus-addressing so that
+    customer replies land in the correct mailbox and get routed back to the ticket.
+    e.g. testsupport+ticket-TKT-00001@bluspring.in
+    """
+    # Prefer the active InboundMailbox configured in DB
+    try:
+        from apps.email_config.models import InboundMailbox
+        mb = InboundMailbox.objects.filter(is_active=True).first()
+        if mb and '@' in mb.email_address:
+            local, domain = mb.email_address.split('@', 1)
+            return f'{local}+ticket-{ticket_number}@{domain}'
+    except Exception:
+        pass
+    # Fallback to IMAP_USER env var
     imap_user = getattr(settings, 'IMAP_USER', '')
     if imap_user and '@' in imap_user:
-        domain = imap_user.split('@', 1)[1]
-        return f'helpdesk+ticket-{ticket_number}@{domain}'
+        local, domain = imap_user.split('@', 1)
+        return f'{local}+ticket-{ticket_number}@{domain}'
+    # Last fallback: use DEFAULT_FROM_EMAIL domain
     from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'helpdesk@yourdomain.local')
     if '@' in from_email:
-        domain = from_email.split('@', 1)[1]
-        return f'helpdesk+ticket-{ticket_number}@{domain}'
+        local, domain = from_email.split('@', 1)
+        return f'{local}+ticket-{ticket_number}@{domain}'
     return from_email
 
 

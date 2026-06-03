@@ -32,6 +32,7 @@ import {
   BookOutlined,
   BugOutlined,
   RadarChartOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
@@ -331,6 +332,11 @@ export default function AppLayout() {
                 key: '/settings/categories',
                 icon: <TagsOutlined />,
                 label: 'Categories',
+              },
+              {
+                key: '/settings/workflows',
+                icon: <ThunderboltOutlined />,
+                label: 'Workflow Rules',
               },
               {
                 key: '/settings/custom-fields',

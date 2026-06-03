@@ -89,9 +89,11 @@ type ConfigMap = Record<string, ConfigItem>;
 
 const SMTP_KEYS = ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_password', 'smtp_use_tls', 'email_from'];
 
-function buildConfigMap(items: ConfigItem[]): ConfigMap {
+function buildConfigMap(data: ConfigItem[] | { results?: ConfigItem[]; count?: number }): ConfigMap {
+  // API can return a plain array OR a paginated {count, results} object
+  const items: ConfigItem[] = Array.isArray(data) ? data : (data?.results ?? []);
   const map: ConfigMap = {};
-  items.forEach((item) => { map[item.key] = item; });
+  items.forEach((item) => { if (item?.key) map[item.key] = item; });
   return map;
 }
 
@@ -569,12 +571,18 @@ const OutboundTab: React.FC = () => {
       const formVals: Record<string, any> = {};
       SMTP_KEYS.forEach((k) => {
         if (map[k]) {
+          // API returns display_value (value is write-only in serializer)
+          const v = map[k].display_value ?? '';
           if (k === 'smtp_use_tls') {
-            formVals[k] = map[k].value === 'true' || map[k].value === '1' || map[k].value === 'True';
-          } else if (map[k].is_secret && isSecretPlaceholder(map[k].display_value)) {
-            formVals[k] = '';
+            // Convert string to boolean for Switch
+            formVals[k] = v === 'true' || v === '1' || v === 'True';
+          } else if (k === 'smtp_port') {
+            // Convert string to number for InputNumber
+            formVals[k] = v ? parseInt(v, 10) : 465;
+          } else if (map[k].is_secret && isSecretPlaceholder(v)) {
+            formVals[k] = '';  // password already set — blank means "keep existing"
           } else {
-            formVals[k] = map[k].value;
+            formVals[k] = v;   // string fields: smtp_host, smtp_user, email_from
           }
         }
       });
@@ -782,7 +790,7 @@ const EmailConfig: React.FC = () => {
         style={{ marginBottom: 20 }}
       />
       <Card>
-        <Tabs items={tabItems} defaultActiveKey="inbound" />
+        <Tabs items={tabItems} defaultActiveKey="inbound" destroyInactiveTabPane={false} />
       </Card>
     </div>
   );

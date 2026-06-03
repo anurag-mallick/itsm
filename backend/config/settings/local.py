@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'apps.knowledge',
     'apps.problems',
     'apps.email_config',
+    'apps.workflows',
 ]
 
 MIDDLEWARE = [
@@ -96,17 +97,15 @@ CACHES = {
 # ── Email — print to console ──────────────────────────────────────────────────
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 
-# SMTP stub for local dev — override with real values from DB (SystemConfig)
-SMTP_HOST = os.environ.get('SMTP_HOST', '')
-SMTP_PORT = 465  # SSL/TLS
-SMTP_USER = os.environ.get('SMTP_USER', '')
-SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD', '')
-EMAIL_HOST = os.environ.get('SMTP_HOST', '')
-EMAIL_PORT = 465
-EMAIL_USE_SSL = True
-EMAIL_USE_TLS = False
-DEFAULT_FROM_EMAIL = os.environ.get('EMAIL_FROM', os.environ.get('SMTP_USER', 'helpdesk@localhost'))
-SERVER_EMAIL = DEFAULT_FROM_EMAIL
+# iRedMail SMTP — port 465 SSL/TLS
+EMAIL_HOST          = os.environ.get('SMTP_HOST',     'mail.bluspring.in')
+EMAIL_PORT          = int(os.environ.get('SMTP_PORT', '465'))
+EMAIL_HOST_USER     = os.environ.get('SMTP_USER',     'testsupport@bluspring.in')
+EMAIL_HOST_PASSWORD = os.environ.get('SMTP_PASSWORD', '')
+EMAIL_USE_SSL       = True    # port 465
+EMAIL_USE_TLS       = False   # NOT STARTTLS
+DEFAULT_FROM_EMAIL  = os.environ.get('EMAIL_FROM', 'testsupport@bluspring.in')
+SERVER_EMAIL        = DEFAULT_FROM_EMAIL
 
 # ── Celery — run tasks synchronously in the same process (no worker needed) ───
 CELERY_TASK_ALWAYS_EAGER = True

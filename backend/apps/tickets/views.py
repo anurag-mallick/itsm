@@ -1,7 +1,11 @@
+import logging
+
 from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+
+logger = logging.getLogger('itsm.tickets')
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.filters import OrderingFilter, SearchFilter
@@ -135,6 +139,11 @@ class TicketListCreateView(AuditMixin, generics.ListCreateAPIView):
             user_agent=self.request.META.get('HTTP_USER_AGENT', ''),
         )
         send_ticket_notification.delay(str(instance.id), 'created')
+        try:
+            from apps.workflows.engine import run_workflows
+            run_workflows(instance, 'ticket_created')
+        except Exception as e:
+            logger.warning(f'Workflow error on ticket create: {e}')
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -182,6 +191,11 @@ class TicketDetailView(AuditMixin, generics.RetrieveUpdateAPIView):
             event = 'resolved' if instance.status == Ticket.RESOLVED else \
                     'closed' if instance.status == Ticket.CLOSED else 'status_changed'
             send_ticket_notification.delay(str(instance.id), event)
+        try:
+            from apps.workflows.engine import run_workflows
+            run_workflows(instance, 'ticket_updated')
+        except Exception:
+            pass
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -240,6 +254,11 @@ class TicketAssignView(APIView):
                 ticket.subject,
                 f'/tickets/{ticket.id}',
             )
+        try:
+            from apps.workflows.engine import run_workflows
+            run_workflows(ticket, 'ticket_updated')
+        except Exception:
+            pass
         return Response(TicketDetailSerializer(ticket, context={'request': request}).data)
 
 
@@ -288,6 +307,11 @@ class TicketStatusView(APIView):
         event = 'resolved' if new_status == Ticket.RESOLVED else \
                 'closed' if new_status == Ticket.CLOSED else 'status_changed'
         send_ticket_notification.delay(str(ticket.id), event)
+        try:
+            from apps.workflows.engine import run_workflows
+            run_workflows(ticket, 'ticket_updated')
+        except Exception:
+            pass
 
         return Response(TicketDetailSerializer(ticket, context={'request': request}).data)
 

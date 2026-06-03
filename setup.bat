@@ -158,16 +158,7 @@ echo   Setup Complete!
 echo  ======================================================
 echo %NC%
 echo.
-echo  %BOLD%To start the application:%NC%
-echo.
-echo    Option 1 - Start everything at once:
-echo      start_dev.bat
-echo.
-echo    Option 2 - Start manually:
-echo      Terminal 1: cd backend ^& set DJANGO_SETTINGS_MODULE=config.settings.local ^& venv\Scripts\python manage.py runserver 8000
-echo      Terminal 2: cd frontend ^& npm run dev
-echo.
-echo  %BOLD%Demo accounts:%NC%
+echo  %BOLD%Demo accounts (pre-loaded):%NC%
 echo    Admin    : admin@helpdesk.local         / Admin@ITSM2025!
 echo    Manager  : itmanager@helpdesk.local     / Manager@ITSM2025!
 echo    Agent    : agent1@helpdesk.local        / Agent@ITSM2025!
@@ -175,8 +166,9 @@ echo    User     : neha.gupta@company.local     / User@ITSM2025!
 echo.
 echo  %BOLD%URLs:%NC%
 echo    Application  : http://localhost:3000
-echo    API          : http://localhost:8000/api/
 echo    API Docs     : http://localhost:8000/api/docs/
 echo    Guest Portal : http://localhost:3000/portal
 echo.
-pause
+echo  %BOLD%Starting the application now...%NC%
+echo.
+start_dev.bat

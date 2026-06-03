@@ -21,6 +21,7 @@ import CustomFields from './pages/settings/CustomFields'
 import CannedResponses from './pages/settings/CannedResponses'
 import EmailConfig from './pages/settings/EmailConfig'
 import TeamsConfig from './pages/settings/TeamsConfig'
+import WorkflowRules from './pages/settings/WorkflowRules'
 import ScanLanding from './pages/scan/ScanLanding'
 import PrivacyPolicy from './pages/PrivacyPolicy'
 import GuestPortal from './pages/GuestPortal'
@@ -124,6 +125,7 @@ export default function App() {
             <Route path="settings/categories" element={<Categories />} />
             <Route path="settings/custom-fields" element={<CustomFields />} />
             <Route path="settings/canned-responses" element={<CannedResponses />} />
+            <Route path="settings/workflows" element={<WorkflowRules />} />
             <Route path="settings/email" element={<EmailConfig />} />
             <Route path="settings/teams" element={<TeamsConfig />} />
 
